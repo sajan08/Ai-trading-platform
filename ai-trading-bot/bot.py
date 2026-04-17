@@ -13,7 +13,13 @@ import yfinance as yf
 
 from upstox import fetch_option_chain, fetch_option_contracts, refresh_token
 
-os.environ.setdefault("YFINANCE_CACHE_DIR", str(Path(__file__).resolve().parent / ".yf-cache"))
+def _get_yfinance_cache_dir() -> str:
+    if os.getenv("VERCEL"):
+        return "/tmp/yf-cache"
+    return str(Path(__file__).resolve().parent / ".yf-cache")
+
+
+os.environ.setdefault("YFINANCE_CACHE_DIR", _get_yfinance_cache_dir())
 Path(os.environ["YFINANCE_CACHE_DIR"]).mkdir(parents=True, exist_ok=True)
 yf.set_tz_cache_location(os.environ["YFINANCE_CACHE_DIR"])
 
@@ -28,15 +34,15 @@ TOP_50_STOCKS = [
     "SIEMENS", "TATACONSUM", "TATAMOTORS", "UPL", "VEDL", "AMBUJACEM",
 ]
 
-FNO_STOCKS = {
-    "RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBAN`K", "SBIN", "ITC", "LT",
-    "AXISBANK", "KOTAKBANK", "BAJFINANCE", "MARUTI", "ASIANPAINT", "HINDUNILVR",
-    "ULTRACEMCO", "WIPRO", "TECHM", "TITAN", "SUNPHARMA", "POWERGRID",
-    "NTPC", "ONGC", "TATASTEEL", "JSWSTEEL", "ADANIENT", "ADANIPORTS",
-    "BAJAJFINSV", "CIPLA", "COALINDIA", "DRREDDY", "GRASIM", "HCLTECH",
-    "HEROMOTOCO", "HINDALCO", "INDUSINDBK", "M&M", "SBILIFE",
-    "SIEMENS", "TATACONSUM", "TATAMOTORS", "UPL",
-}
+# FNO_STOCKS = {
+#     "RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "SBIN", "ITC", "LT",
+#     "AXISBANK", "KOTAKBANK", "BAJFINANCE", "MARUTI", "ASIANPAINT", "HINDUNILVR",
+#     "ULTRACEMCO", "WIPRO", "TECHM", "TITAN", "SUNPHARMA", "POWERGRID",
+#     "NTPC", "ONGC", "TATASTEEL", "JSWSTEEL", "ADANIENT", "ADANIPORTS",
+#     "BAJAJFINSV", "CIPLA", "COALINDIA", "DRREDDY", "GRASIM", "HCLTECH",
+#     "HEROMOTOCO", "HINDALCO", "INDUSINDBK", "M&M", "SBILIFE",
+#     "SIEMENS", "TATACONSUM", "TATAMOTORS", "UPL",
+# }
 
 POSITIVE_NEWS_WORDS = {
     "profit", "growth", "upgrade", "surge", "beat", "record", "bullish",
