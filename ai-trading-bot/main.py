@@ -3,14 +3,18 @@ from fastapi.responses import FileResponse, RedirectResponse
 
 from bot import (
     analyze_symbol,
+    generate_beginner_ideas,
     generate_option_ideas,
     generate_trade_ideas,
+    get_beginner_playbook,
     get_market_overview,
     get_news_for_symbol,
     get_option_contract_suggestions,
+    get_personal_stock_plan,
     get_stock_list,
     get_token,
 )
+from practice import add_journal_note, get_practice_dashboard, paper_buy, paper_sell, reset_practice_account
 from upstox import generate_token, get_connection_status, get_login_url, place_market_order
 
 app = FastAPI(title="AI Trading Assistant")
@@ -63,6 +67,52 @@ def trade_ideas(
         "segment": segment,
         "results": generate_trade_ideas(budget=budget, segment=segment, limit=limit),
     }
+
+
+@app.get("/beginner-ideas")
+def beginner_ideas(budget: int = 500, limit: int = 6):
+    return {
+        "budget": budget,
+        "results": generate_beginner_ideas(budget=budget, limit=limit),
+    }
+
+
+@app.get("/beginner-playbook")
+def beginner_playbook():
+    return get_beginner_playbook()
+
+
+@app.get("/personal-analysis")
+def personal_analysis(symbol: str, capital: int = 500, risk_profile: str = "low"):
+    try:
+        return get_personal_stock_plan(symbol=symbol, capital=capital, risk_profile=risk_profile)
+    except Exception as exc:
+        return {"error": f"Unable to build plan for {symbol.upper()}", "details": str(exc)}
+
+
+@app.get("/practice")
+def practice_dashboard():
+    return get_practice_dashboard()
+
+
+@app.post("/practice/buy")
+def practice_buy(symbol: str, qty: int = 1, note: str = ""):
+    return paper_buy(symbol=symbol, qty=qty, note=note)
+
+
+@app.post("/practice/sell")
+def practice_sell(position_id: str, note: str = ""):
+    return paper_sell(position_id=position_id, note=note)
+
+
+@app.post("/practice/journal")
+def practice_journal(symbol: str = "", note: str = "", mood: str = "neutral"):
+    return add_journal_note(symbol=symbol, note=note, mood=mood)
+
+
+@app.post("/practice/reset")
+def practice_reset():
+    return reset_practice_account()
 
 
 @app.get("/option-ideas")

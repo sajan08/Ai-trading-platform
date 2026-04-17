@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 import os
+from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
 import xml.etree.ElementTree as ET
@@ -11,6 +12,10 @@ import requests
 import yfinance as yf
 
 from upstox import fetch_option_chain, fetch_option_contracts, refresh_token
+
+os.environ.setdefault("YFINANCE_CACHE_DIR", str(Path(__file__).resolve().parent / ".yf-cache"))
+Path(os.environ["YFINANCE_CACHE_DIR"]).mkdir(parents=True, exist_ok=True)
+yf.set_tz_cache_location(os.environ["YFINANCE_CACHE_DIR"])
 
 TOP_50_STOCKS = [
     "RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "SBIN", "ITC", "LT",
@@ -24,7 +29,7 @@ TOP_50_STOCKS = [
 ]
 
 FNO_STOCKS = {
-    "RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "SBIN", "ITC", "LT",
+    "RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBAN`K", "SBIN", "ITC", "LT",
     "AXISBANK", "KOTAKBANK", "BAJFINANCE", "MARUTI", "ASIANPAINT", "HINDUNILVR",
     "ULTRACEMCO", "WIPRO", "TECHM", "TITAN", "SUNPHARMA", "POWERGRID",
     "NTPC", "ONGC", "TATASTEEL", "JSWSTEEL", "ADANIENT", "ADANIPORTS",
@@ -82,6 +87,10 @@ def _ticker(symbol: str) -> str:
     return f"{symbol}.NS"
 
 
+def normalize_symbol(symbol: str) -> str:
+    return symbol.strip().upper().replace(".NS", "")
+
+
 def _safe_float(value: object, default: float = 0.0) -> float:
     try:
         return round(float(value), 2)
@@ -132,6 +141,7 @@ def get_live_price(instrument_token: str, symbol: Optional[str] = None) -> Optio
 
 @lru_cache(maxsize=128)
 def get_price_history(symbol: str, period: str = "6mo") -> pd.DataFrame:
+    symbol = normalize_symbol(symbol)
     history = yf.Ticker(_ticker(symbol)).history(period=period, interval="1d", auto_adjust=False)
     if history.empty:
         raise ValueError(f"No historical data for {symbol}")
@@ -224,6 +234,7 @@ def _rss_articles(symbol: str) -> list[dict]:
 
 
 def get_news_sentiment(symbol: str) -> dict:
+    symbol = normalize_symbol(symbol)
     try:
         articles = _newsapi_articles(symbol)
         provider = "NewsAPI"
@@ -257,6 +268,7 @@ def get_news_sentiment(symbol: str) -> dict:
 
 
 def ai_decision(symbol: str, budget: int = 500) -> dict:
+    symbol = normalize_symbol(symbol)
     history = get_price_history(symbol)
     close = history["Close"]
     high = history["High"]
@@ -392,9 +404,7 @@ def ai_decision(symbol: str, budget: int = 500) -> dict:
 
 
 def analyze_symbol(symbol: str, budget: int = 500) -> dict:
-    if symbol not in INSTRUMENTS["symbol"].values:
-        raise ValueError("Invalid stock symbol")
-
+    symbol = normalize_symbol(symbol)
     analysis = ai_decision(symbol, budget=budget)
     token = get_token(symbol)
     live_price = get_live_price(token or symbol, symbol=symbol)
@@ -405,6 +415,51 @@ def analyze_symbol(symbol: str, budget: int = 500) -> dict:
         analysis["daily_change_pct"] = _pct_change(live_price, analysis["previous_close"])
 
     return analysis
+
+
+def get_personal_stock_plan(symbol: str, capital: int = 500, risk_profile: str = "low") -> dict:
+    symbol = normalize_symbol(symbol)
+    analysis = analyze_symbol(symbol=symbol, budget=capital)
+
+    risk_profile = risk_profile.lower()
+    risk_fraction = {"low": 0.02, "medium": 0.04, "high": 0.06}.get(risk_profile, 0.02)
+    per_share_risk = max(analysis["price"] - analysis["stop_loss"], 0.01)
+    max_risk_amount = round(capital * risk_fraction, 2)
+    qty_by_budget = int(capital // analysis["price"]) if analysis["price"] > 0 else 0
+    qty_by_risk = int(max_risk_amount // per_share_risk) if per_share_risk > 0 else 0
+    suggested_qty = max(min(qty_by_budget, qty_by_risk), 0)
+
+    recommendation = "AVOID"
+    if analysis["decision"] in {"STRONG BUY", "BUY"} and suggested_qty >= 1:
+        recommendation = "BUY SMALL"
+    elif analysis["decision"] == "WATCH":
+        recommendation = "WAIT"
+
+    monthly_goal_note = (
+        "Small monthly side income is possible only with discipline; it is not guaranteed, and some months can be negative."
+    )
+
+    return {
+        **analysis,
+        "capital": capital,
+        "risk_profile": risk_profile,
+        "per_share_risk": round(per_share_risk, 2),
+        "max_risk_amount": max_risk_amount,
+        "qty_by_budget": qty_by_budget,
+        "qty_by_risk": qty_by_risk,
+        "suggested_qty": suggested_qty,
+        "recommendation": recommendation,
+        "entry_plan": f"Consider entry near Rs. {analysis['price']} only if price stays above stop-loss Rs. {analysis['stop_loss']}.",
+        "exit_plan": f"Book profit near Rs. {analysis['target']} or exit below Rs. {analysis['stop_loss']}.",
+        "monthly_goal_note": monthly_goal_note,
+        "coach_note": (
+            "As a beginner, use only cash equity and very small size. Avoid MTF and options until your journal shows consistency."
+        ),
+        "verdict_reason": (
+            f"Decision {analysis['decision']}, score {analysis['score']}, news {analysis['news_sentiment']}, "
+            f"and risk-reward {analysis['risk_reward']}."
+        ),
+    }
 
 
 def generate_trade_ideas(budget: int = 500, segment: str = "all", limit: int = 6) -> list[dict]:
@@ -439,6 +494,49 @@ def generate_trade_ideas(budget: int = 500, segment: str = "all", limit: int = 6
         reverse=True,
     )
     return ideas[:limit]
+
+
+def generate_beginner_ideas(budget: int = 500, limit: int = 6) -> list[dict]:
+    ideas = generate_trade_ideas(budget=budget, segment="equity", limit=20)
+    beginner = []
+
+    for idea in ideas:
+        if idea["price"] > 500:
+            continue
+        if idea["decision"] not in {"STRONG BUY", "BUY", "WATCH"}:
+            continue
+
+        action = "Wait"
+        if idea["decision"] in {"STRONG BUY", "BUY"} and idea["risk_reward"] >= 1.5:
+            action = "Buy small"
+        elif idea["decision"] == "WATCH":
+            action = "Watch only"
+
+        beginner.append(
+            {
+                **idea,
+                "beginner_action": action,
+                "why_this_stock": (
+                    f"Price under Rs. 500, trend score {idea['score']}, "
+                    f"and stop-loss clearly defined at Rs. {idea['stop_loss']}."
+                ),
+                "how_to_buy": "Buy only 1 quantity first, then observe price movement calmly.",
+                "when_to_sell": (
+                    f"Exit near target Rs. {idea['target']} or exit fast if price closes below stop-loss Rs. {idea['stop_loss']}."
+                ),
+                "profit_booking": "If stock moves 3% to 5% up quickly, you can book partial or full profit.",
+            }
+        )
+
+    beginner.sort(
+        key=lambda item: (
+            item["beginner_action"] == "Buy small",
+            item["score"],
+            item["risk_reward"],
+        ),
+        reverse=True,
+    )
+    return beginner[:limit]
 
 
 def _normalize_option_rows(payload: dict) -> list[dict]:
@@ -584,6 +682,39 @@ def get_news_for_symbol(symbol: str) -> dict:
         "headline": news["headline"],
         "api_configured": news["api_configured"],
         "articles": news["articles"],
+    }
+
+
+def get_beginner_playbook() -> dict:
+    return {
+        "goal": "First understand market basics, then place very small trades.",
+        "steps": [
+            {
+                "title": "1. Market means ownership",
+                "description": "When you buy a stock, you buy a small part of that company.",
+            },
+            {
+                "title": "2. Buy only when plan is clear",
+                "description": "Before buying, know your entry price, stop-loss and target.",
+            },
+            {
+                "title": "3. Stop-loss protects capital",
+                "description": "If price falls to stop-loss, exit. Small loss is normal and safe.",
+            },
+            {
+                "title": "4. Profit booking is planned selling",
+                "description": "When target hits or momentum becomes weak, book profit instead of waiting forever.",
+            },
+            {
+                "title": "5. Start with delivery, not risky F&O",
+                "description": "As a beginner, learn with cash equity first. Use F&O only after understanding risk well.",
+            },
+        ],
+        "buy_rule": "Buy only if decision is BUY or STRONG BUY and the stock is under your budget.",
+        "wait_rule": "If decision is WATCH, do not buy yet. Just track it for a few days.",
+        "sell_rule": "Sell when target is reached, stop-loss is hit, or the original reason for buying becomes invalid.",
+        "risk_rule": "Never put all money in one stock. Start with one small position.",
+        "beginner_tip": "For now, focus only on under-Rs. 500 equity stocks and avoid options until basics become comfortable.",
     }
 
 
